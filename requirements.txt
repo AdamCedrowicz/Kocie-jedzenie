@@ -1,0 +1,4 @@
+# Skrypt korzysta wyłącznie z biblioteki standardowej Pythona
+# (imaplib, smtplib, email, re, zoneinfo).
+# tzdata dostarcza bazę stref czasowych dla zoneinfo – obraz python:3.10-slim jej nie zawiera.
+tzdata>=2024.1

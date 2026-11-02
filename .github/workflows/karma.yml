@@ -1,0 +1,38 @@
+name: Przypomnienie o karmie
+
+on:
+  schedule:
+    # Codziennie 6:17 UTC = 7:17 zimą / 8:17 latem w Polsce.
+    # Skrypt sam liczy "dzisiaj" w strefie Europe/Warsaw, więc godzina nie wpływa na wynik.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Tylko log, bez wysyłki maila"
+        type: boolean
+        default: true
+      today_override:
+        description: "Udawana data 'dzisiaj' (RRRR-MM-DD), puste = prawdziwa"
+        type: string
+        default: ""
+
+jobs:
+  karma:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - run: python script.py
+        env:
+          IMAP_SERVER: ${{ secrets.IMAP_SERVER }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          # Z harmonogramu oba pola są puste: prawdziwa data i prawdziwa wysyłka.
+          DRY_RUN: ${{ inputs.dry_run }}
+          TODAY_OVERRIDE: ${{ inputs.today_override }}
