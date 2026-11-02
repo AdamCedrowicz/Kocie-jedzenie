@@ -1,11 +1,11 @@
 # Kocie jedzenie 🐱
 
-Codzienne przypomnienie o kończącej się karmie dla kotów (GitLab Scheduled Pipeline).
+Codzienne przypomnienie o kończącej się karmie dla kotów (GitHub Actions, `.github/workflows/karma.yml`).
 Skrypt `script.py` czyta najnowsze potwierdzenie zamówienia Zooplus (IMAP), liczy datę
 wyczerpania zapasów (300 g/dzień) oraz ostatni dzień na zamówienie (−4 dni robocze)
 i wysyła maila (SMTP) 14 dni przed wyczerpaniem oraz w ostatnim dniu na zamówienie.
 
-## Zmienne CI/CD (Settings → CI/CD → Variables)
+## Sekrety (Settings → Secrets and variables → Actions)
 
 | Zmienna | Wymagana | Opis |
 |---|---|---|
@@ -18,10 +18,13 @@ i wysyła maila (SMTP) 14 dni przed wyczerpaniem oraz w ostatnim dniu na zamówi
 | `NOTIFY_EMAIL` | nie | adresat przypomnień, domyślnie `EMAIL_USER` |
 | `SMTP_USER` / `SMTP_PASSWORD` | nie | gdy SMTP ma inne dane logowania niż IMAP |
 
-Opcjonalne: `IMAP_FOLDER` (`INBOX`), `SENDER_FILTER` (`zooplus`), `IMAP_SEARCH_DAYS` (`180`),
+Opcjonalne (dopisz je w sekcji `env` w `karma.yml`, żeby zadziałały): `IMAP_FOLDER` (`INBOX`), `SENDER_FILTER` (`zooplus`), `IMAP_SEARCH_DAYS` (`180`),
 `DAILY_GRAMS` (`300`), `DELIVERY_BUSINESS_DAYS` (`4`), `EARLY_REMINDER_DAYS` (`14`),
 `TZ_NAME` (`Europe/Warsaw`), `DRY_RUN` (`true` = bez wysyłki), `TODAY_OVERRIDE` (`RRRR-MM-DD`, do testów).
 
-## Harmonogram
+## Harmonogram i testy
 
-Build → Pipeline schedules → New schedule, np. `0 8 * * *`, strefa `Europe/Warsaw`.
+Workflow „Przypomnienie o karmie” uruchamia się codziennie (cron w `karma.yml`).
+Ręcznie: Actions → Przypomnienie o karmie → Run workflow (`dry_run` = tylko log,
+`today_override` = udawana data, np. dzień przypomnienia z logu).
+Harmonogram działa tylko na domyślnej gałęzi repozytorium.
