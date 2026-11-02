@@ -2,9 +2,10 @@
 """
 Powiadomienia o kończącej się karmie dla kotów.
 
-Skrypt uruchamiany codziennie (GitLab Scheduled Pipeline):
-  1. Loguje się przez IMAP i szuka najnowszego potwierdzenia zamówienia od Zooplus.
-  2. Wyciąga z treści maila datę zamówienia i łączną ilość karmy (w gramach).
+Skrypt uruchamiany codziennie (GitHub Actions, .github/workflows/karma.yml):
+  1. Loguje się przez IMAP i pobiera maile od Zooplus (potwierdzenia nadania paczek itp.).
+  2. Składa z nich najnowsze zamówienie z karmą (FOOD_KEYWORD, domyślnie "Feringa"):
+     datę zamówienia i łączną ilość karmy w gramach (sztuki x waga z nazwy produktu).
   3. Liczy datę wyczerpania zapasów oraz ostatni dzień na zamówienie
      (data wyczerpania minus N dni roboczych, z pominięciem weekendów).
   4. Wysyła przypomnienie przez SMTP tylko, gdy dziś jest:
@@ -51,9 +52,10 @@ def env(name: str, default: str | None = None, required: bool = False) -> str:
 DAILY_GRAMS = int(env("DAILY_GRAMS", "300"))                 # dzienne spożycie
 DELIVERY_BUSINESS_DAYS = int(env("DELIVERY_BUSINESS_DAYS", "4"))
 EARLY_REMINDER_DAYS = int(env("EARLY_REMINDER_DAYS", "14"))   # "dwa tygodnie przed"
-TIMEZONE = ZoneInfo(env("TZ_NAME", "Europe/Warsaw"))          # runnery GitLaba działają w UTC
+TIMEZONE = ZoneInfo(env("TZ_NAME", "Europe/Warsaw"))          # runnery GitHub Actions działają w UTC
 SENDER_FILTER = env("SENDER_FILTER", "zooplus")               # fragment adresu nadawcy
 SEARCH_DAYS = int(env("IMAP_SEARCH_DAYS", "180"))             # jak daleko wstecz szukać
+FOOD_KEYWORD = env("FOOD_KEYWORD", "Feringa")                 # początek nazwy karmy w zamówieniu
 DRY_RUN = env("DRY_RUN", "false").lower() in ("1", "true", "yes")
 
 # Temat maila, który uznajemy za potwierdzenie zamówienia (PL + EN).
@@ -149,7 +151,7 @@ LABELLED_DATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Ilość karmy, np. "12 kg", "2 x 12 kg", "24 x 85 g", "2 x (6 x 400 g)", "1,5kg".
+# Waga jednej sztuki z nazwy produktu, np. "12 kg", "6 x 400 g", "2 x (6 x 400 g)", "1,5kg".
 #   outer  – opcjonalny mnożnik zewnętrzny (liczba opakowań zbiorczych)
 #   inner  – opcjonalny mnożnik wewnętrzny (liczba sztuk w opakowaniu)
 #   amount – waga jednej sztuki
@@ -161,15 +163,26 @@ WEIGHT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Liczba sztuk podana w osobnej kolumnie/linii, np. "Ilość: 2" lub "2 szt."
-QTY_RE = re.compile(r"(?:ilo[śs][ćc]|quantity|menge)\s*:?\s*(?P<qty>\d+)|(?P<qty2>\d+)\s*szt", re.IGNORECASE)
-
-# Linie, w których waga nie dotyczy karmy (np. waga paczki, darmowa dostawa od X kg).
-IGNORE_LINE_RE = re.compile(r"przesy[łl]k|paczk|wysy[łl]k|dostaw|shipping|parcel|gratis", re.IGNORECASE)
-
 UNIT_TO_GRAMS = {"kg": 1000.0, "dag": 10.0, "g": 1.0, "gr": 1.0}
 
+# Pozycja zamówienia w mailu Zooplus (tekst ze ściśniętymi białymi znakami):
+#   "Feringa Classic Meat Menu, 6 x 400 g - Drób Drób Nr artykułu 1281422.7 8 x 44,96 PLN 359,68 PLN"
+#   name – nazwa z wariantem (do "Nr artykułu"; bez "PLN", żeby nie wejść na poprzednią pozycję)
+#   art  – numer artykułu (do usuwania duplikatów)
+#   qty  – liczba zamówionych sztuk ("8 x 44,96 PLN")
+ITEM_RE = re.compile(
+    r"(?P<name>{kw}(?:(?!Nr\s+artyku|PLN).){{0,250}}?)"
+    r"\s*Nr\s+artyku[łl]u:?\s*(?P<art>[\d.]+)"
+    r"\s*(?P<qty>\d+)\s*[x×]\s*\d[\d\s.]*,\d{{2}}\s*(?:PLN|zł)".format(kw=re.escape(FOOD_KEYWORD)),
+    re.IGNORECASE,
+)
 
+# Numer zamówienia w temacie ("... z zamówienia 454820177 ...") lub w treści ("Numer zamówienia: 454820177").
+ORDER_NO_RE = re.compile(r"\b(\d{8,})\b")
+BODY_ORDER_NO_RE = re.compile(r"Numer\s+zam[óo]wienia:?\s*(?:Data\s+zam[óo]wienia:?\s*)?(\d{8,})", re.IGNORECASE)
+
+# Zooplus wysyła osobny mail dla każdej paczki: "Paczka 4 (z 4) z zamówienia ...".
+PACKAGE_RE = re.compile(r"Paczka\s+(\d+)\s*\(z\s*\d+\)", re.IGNORECASE)
 def parse_date_string(raw: str) -> date | None:
     """Zamienia różne formaty dat na obiekt date."""
     raw = raw.strip()
@@ -199,42 +212,31 @@ def extract_order_date(body: str, msg: Message) -> date | None:
     return None
 
 
-def extract_total_grams(body: str) -> float:
-    """Sumuje łączną ilość karmy w gramach ze wszystkich pozycji zamówienia.
+def extract_food_items(body: str) -> dict[str, float]:
+    """Zwraca pozycje karmy z maila: {numer artykułu: gramy razem}.
 
-    Dla każdej linii z wagą liczy: outer * inner * amount * przelicznik_jednostki.
-    Jeśli liczba sztuk jest podana osobno ("Ilość: 2"), w tej samej lub jednej
-    z dwóch kolejnych linii, waga jest dodatkowo przez nią mnożona.
+    Liczone są tylko produkty, których nazwa zaczyna się od FOOD_KEYWORD (np. "Feringa"),
+    więc przysmaki, żwirek czy zabawki z tego samego zamówienia są pomijane.
+    Gramy = liczba sztuk ("8 x 44,96 PLN") * waga sztuki z nazwy ("6 x 400 g").
     """
-    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-    total = 0.0
-    for i, line in enumerate(lines):
-        if IGNORE_LINE_RE.search(line):
+    flat = re.sub(r"\s+", " ", body)
+    items: dict[str, float] = {}
+    for m in ITEM_RE.finditer(flat):
+        weights = [
+            int(w.group("outer") or 1)
+            * int(w.group("inner") or 1)
+            * float(w.group("amount").replace(",", "."))
+            * UNIT_TO_GRAMS[w.group("unit").lower()]
+            for w in WEIGHT_RE.finditer(m.group("name"))
+        ]
+        if not weights:
+            log.warning("Pozycja bez wagi w nazwie, pominięta: %r", m.group("name"))
             continue
-        matches = list(WEIGHT_RE.finditer(line))
-        if not matches:
-            continue
-        # Kilka wag w jednej linii to zwykle opis tego samego produktu
-        # (np. "12 kg (2 x 6 kg)") – bierzemy największą wartość.
-        line_grams = max(
-            int(m.group("outer") or 1)
-            * int(m.group("inner") or 1)
-            * float(m.group("amount").replace(",", "."))
-            * UNIT_TO_GRAMS[m.group("unit").lower()]
-            for m in matches
-        )
-        # Szukamy osobno podanej liczby sztuk w tej i dwóch kolejnych liniach.
-        qty = 1
-        for j, nearby in enumerate(lines[i:i + 3]):
-            if j > 0 and WEIGHT_RE.search(nearby):
-                break  # kolejny produkt – nie podbieramy jego ilości
-            q = QTY_RE.search(nearby)
-            if q:
-                qty = int(q.group("qty") or q.group("qty2"))
-                break
-        log.info("Pozycja: %r -> %d x %.0f g", line, qty, line_grams)
-        total += qty * line_grams
-    return total
+        # Kilka wag w nazwie to zwykle opis tego samego produktu ("12 kg (2 x 6 kg)") – bierzemy największą.
+        grams = int(m.group("qty")) * max(weights)
+        log.info("Pozycja: %r -> %s szt. = %.0f g", m.group("name").strip(), m.group("qty"), grams)
+        items[m.group("art")] = items.get(m.group("art"), 0) + grams
+    return items
 
 
 # --------------------------------------------------------------------------- #
@@ -243,13 +245,13 @@ def extract_total_grams(body: str) -> float:
 
 @dataclass
 class Order:
+    number: str
     order_date: date
     grams: float
-    subject: str
 
 
-def fetch_latest_order() -> Order:
-    """Znajduje najnowszy mail od Zooplus z potwierdzeniem zamówienia i go parsuje."""
+def fetch_zooplus_messages() -> list[Message]:
+    """Pobiera maile od Zooplus z ostatnich SEARCH_DAYS dni (maks. 50 najnowszych)."""
     host = env("IMAP_SERVER", required=True)
     port = int(env("IMAP_PORT", "993"))
     user = env("EMAIL_USER", required=True)
@@ -268,38 +270,52 @@ def fetch_latest_order() -> Order:
         uids = data[0].split()
         log.info("Znaleziono %d maili od '%s' z ostatnich %d dni.", len(uids), SENDER_FILTER, SEARCH_DAYS)
 
-        # Pobieramy wiadomości i sortujemy po dacie (najnowsze najpierw);
-        # kolejność UID nie zawsze odpowiada dacie wysłania.
-        messages: list[tuple[datetime, Message]] = []
+        messages = []
         for uid in uids[-50:]:
             status, msg_data = imap.uid("fetch", uid, "(RFC822)")
-            if status != "OK" or not msg_data or msg_data[0] is None:
-                continue
-            msg = email.message_from_bytes(msg_data[0][1])
-            try:
-                sent = parsedate_to_datetime(msg["Date"])
-            except (TypeError, ValueError):
-                sent = datetime.min.replace(tzinfo=TIMEZONE)
-            if sent.tzinfo is None:
-                sent = sent.replace(tzinfo=TIMEZONE)
-            messages.append((sent, msg))
+            if status == "OK" and msg_data and msg_data[0] is not None:
+                messages.append(email.message_from_bytes(msg_data[0][1]))
+    return messages
 
-    messages.sort(key=lambda pair: pair[0], reverse=True)
 
-    # Pierwszy (najnowszy) mail, który wygląda na zamówienie i zawiera ilość karmy.
-    for _, msg in messages:
+def latest_food_order(messages: list[Message]) -> Order:
+    """Składa zamówienia z maili i zwraca najnowsze, w którym była karma.
+
+    Jedno zamówienie to często kilka maili (po jednym na paczkę), każdy z częścią produktów.
+    Pozycje grupujemy po numerze zamówienia i numerze paczki, a w obrębie paczki po numerze
+    artykułu, więc ponownie wysłany mail tej samej paczki nie liczy się podwójnie.
+    Jeśli jest mail z całym zamówieniem (bez numeru paczki), używamy tylko jego.
+    """
+    # numer zamówienia -> {"date": data, "parts": {numer paczki lub "całość": {artykuł: gramy}}}
+    orders: dict[str, dict] = {}
+    for msg in messages:
         subject = decode_str(msg.get("Subject"))
         if not ORDER_SUBJECT_RE.search(subject):
             continue
         body = message_body_text(msg)
-        grams = extract_total_grams(body)
+        items = extract_food_items(body)
+        if not items:
+            continue
+        number_match = ORDER_NO_RE.search(subject) or BODY_ORDER_NO_RE.search(body)
         order_date = extract_order_date(body, msg)
-        if grams > 0 and order_date:
-            log.info("Użyto maila: %r (data zamówienia %s, %.0f g)", subject, order_date, grams)
-            return Order(order_date, grams, subject)
-        log.warning("Pominięto mail %r – nie udało się odczytać daty lub ilości karmy.", subject)
+        if not number_match or not order_date:
+            log.warning("Pominięto mail %r – brak numeru lub daty zamówienia.", subject)
+            continue
+        package = PACKAGE_RE.search(subject)
+        order = orders.setdefault(number_match.group(1), {"date": order_date, "parts": {}})
+        order["parts"].setdefault(package.group(1) if package else "całość", {}).update(items)
+        log.info("Mail %r: %d pozycji karmy.", subject, len(items))
 
-    raise RuntimeError("Nie znaleziono maila z potwierdzeniem zamówienia Zooplus.")
+    if not orders:
+        raise RuntimeError(f"Nie znaleziono maila Zooplus z zamówieniem karmy '{FOOD_KEYWORD}'.")
+
+    number, order = max(orders.items(), key=lambda kv: (kv[1]["date"], kv[0]))
+    parts = order["parts"]
+    if "całość" in parts:
+        parts = {"całość": parts["całość"]}
+    grams = sum(sum(part.values()) for part in parts.values())
+    log.info("Najnowsze zamówienie karmy: %s z %s, %.0f g.", number, order["date"], grams)
+    return Order(number, order["date"], grams)
 
 
 # --------------------------------------------------------------------------- #
@@ -369,7 +385,7 @@ def main() -> int:
     override = os.environ.get("TODAY_OVERRIDE")
     today = date.fromisoformat(override) if override else datetime.now(TIMEZONE).date()
 
-    order = fetch_latest_order()
+    order = latest_food_order(fetch_zooplus_messages())
     runs_out = depletion_date(order.order_date, order.grams)
     last_order_day = subtract_business_days(runs_out, DELIVERY_BUSINESS_DAYS)
     early_reminder_day = runs_out - timedelta(days=EARLY_REMINDER_DAYS)
@@ -390,6 +406,8 @@ def main() -> int:
             f"Dostawa trwa ok. {DELIVERY_BUSINESS_DAYS} dni robocze, a karma skończy się {runs_out:%d.%m.%Y}."
         )
 
+    if runs_out < today:
+        log.warning("Data wyczerpania zapasów już minęła – czy ostatnie zamówienie karmy jest w skrzynce?")
     if not reasons:
         log.info("Dziś nie ma powodu do wysyłania przypomnienia.")
         return 0
@@ -400,8 +418,8 @@ def main() -> int:
     )
     body = "\n\n".join(reasons) + (
         "\n\nSzczegóły:\n"
-        f"- ostatnie zamówienie: {order.order_date:%d.%m.%Y} ({order.subject})\n"
-        f"- zamówiona ilość: {order.grams / 1000:.2f} kg\n"
+        f"- ostatnie zamówienie karmy: nr {order.number} z {order.order_date:%d.%m.%Y}\n"
+        f"- zamówiona ilość {FOOD_KEYWORD}: {order.grams / 1000:.2f} kg\n"
         f"- dzienne spożycie: {DAILY_GRAMS} g\n"
         f"- szacowane wyczerpanie zapasów: {runs_out:%d.%m.%Y}\n"
         f"- ostatni dzień na zamówienie: {last_order_day:%d.%m.%Y}\n"
