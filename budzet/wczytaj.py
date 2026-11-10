@@ -190,15 +190,17 @@ def wczytaj_plik(sciezka):
     return df, fmt, problemy
 
 
-def oznacz_transfery(df, moje_rachunki, kontrahenci_wewnetrzni=(), dni=3):
+def oznacz_transfery(df, moje_rachunki, kontrahenci_wewnetrzni=(), rachunki_przejsciowe=(), dni=3):
     """Transfer wewnętrzny = przelew na/z własnego rachunku (także numer w tytule, np. AUTOPAY),
-    kontrahent z listy (np. kantor), albo druga strona takiego przelewu w innym źródle
+    kontrahent z listy, każda operacja na rachunku przejściowym (np. Erste EUR: przychód liczy się
+    dopiero jako PLN z kantoru), albo druga strona takiego przelewu w innym źródle
     (ta sama kwota z przeciwnym znakiem, do `dni` dni różnicy)."""
     moje = {nr(x) for x in moje_rachunki}
     zwarty = (df.opis + df.tytul).str.replace(r"\s", "", regex=True).str.upper()
     flaga = df.rachunek_kontrahenta.isin(moje) | zwarty.map(lambda t: any(m in t for m in moje))
     for wz in kontrahenci_wewnetrzni:
         flaga |= df.opis.str.contains(wz, case=False, regex=False)
+    flaga |= df.rachunek.isin({nr(x) for x in rachunki_przejsciowe})
 
     para = pd.Series("", index=df.index)
     konto = df.zrodlo + df.rachunek
@@ -232,7 +234,8 @@ def wczytaj_folder(folder, ustawienia=None):
     df = df.drop_duplicates("id").reset_index(drop=True)
     df["data"] = pd.to_datetime(df.data)
     df["data_ksiegowania"] = pd.to_datetime(df.data_ksiegowania)
-    df = oznacz_transfery(df, ust.get("moje_rachunki", []), ust.get("kontrahenci_wewnetrzni", []))
+    df = oznacz_transfery(df, ust.get("moje_rachunki", []), ust.get("kontrahenci_wewnetrzni", []),
+                          ust.get("rachunki_przejsciowe", []))
     return df.sort_values(["data", "zrodlo"], ascending=[False, True]).reset_index(drop=True), raport
 
 

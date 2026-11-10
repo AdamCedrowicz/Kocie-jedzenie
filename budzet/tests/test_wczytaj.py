@@ -9,7 +9,8 @@ from budzet.wczytaj import kwota, wczytaj_folder, wczytaj_plik
 MOJE = {"moje_rachunki": ["11 1111 1111 1111 1111 1111 1111",   # PKO konto
                           "22 2222 2222 2222 2222 2222 2222",   # mBank
                           "33 3333 3333 3333 3333 3333 3333"],  # Erste
-        "kontrahenci_wewnetrzni": ["KANTOR TEST"]}
+        "kontrahenci_wewnetrzni": ["KANTOR TEST"],
+        "rachunki_przejsciowe": ["77 7777 7777 7777 7777 7777 7777"]}  # Erste EUR
 
 PKO_KONTO = (
     '"Data operacji","Data waluty","Typ transakcji","Kwota","Waluta","Saldo po transakcji","Opis transakcji","","","",""\n'
@@ -126,6 +127,16 @@ class TestWczytaj(unittest.TestCase):
         zapisz(self.dir, "erste.csv", ERSTE.replace("KLIENT SP. Z O.O.", "KANTOR TEST SP. Z O.O."))
         df, _ = wczytaj_folder(self.dir, MOJE)
         self.assertTrue(df[df.kwota == 12619].transfer_wewnetrzny.all())
+
+    def test_rachunek_przejsciowy_eur_nie_liczy_sie_a_pln_z_kantoru_tak(self):
+        zapisz(self.dir, "erste_eur.csv",
+               "2026-11-11,06-10-2026,'77 7777 7777 7777 7777 7777 7777,MOJA FIRMA,EUR,\"0,00\",\"0,00\",2,\n"
+               "09-10-2026,09-10-2026,JJ2F20,SUPER GRUPA PL,88 8888 8888 8888 8888 8888 8888,\"-4300,00\",\"0,00\",1,\n"
+               "09-10-2026,09-10-2026,invoice FV-1,KLIENT ZAGRANICZNY,CH00 0000 0000,\"4300,00\",\"4300,00\",2,\n")
+        zapisz(self.dir, "erste.csv", ERSTE.replace("KLIENT SP. Z O.O.", "SUPER GRUPA PL"))
+        df, _ = wczytaj_folder(self.dir, MOJE)
+        self.assertTrue(df[df.waluta == "EUR"].transfer_wewnetrzny.all())
+        self.assertFalse(df[(df.kwota == 12619) & (df.waluta == "PLN")].transfer_wewnetrzny.any())
 
     def test_nieznany_plik_nie_blokuje_reszty(self):
         zapisz(self.dir, "smieci.csv", "a,b,c\n1,2,3\n")
