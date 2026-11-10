@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# Budżet: wyciągi bankowe, wyniki i własne numery rachunków nie trafiają do repo
+budzet/ustawienia.json
+budzet/**/*.csv
+budzet/**/*.xlsx
+*.xlsx
