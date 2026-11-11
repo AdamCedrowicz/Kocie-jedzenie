@@ -199,7 +199,7 @@ def oznacz_transfery(df, moje_rachunki, kontrahenci_wewnetrzni=(), rachunki_prze
     zwarty = (df.opis + df.tytul).str.replace(r"\s", "", regex=True).str.upper()
     flaga = df.rachunek_kontrahenta.isin(moje) | zwarty.map(lambda t: any(m in t for m in moje))
     for wz in kontrahenci_wewnetrzni:
-        flaga |= df.opis.str.contains(wz, case=False, regex=False)
+        flaga |= df.kontrahent.str.contains(wz, case=False, regex=False)  # tylko kontrahent, nie tytuł
     flaga |= df.rachunek.isin({nr(x) for x in rachunki_przejsciowe})
 
     para = pd.Series("", index=df.index)
