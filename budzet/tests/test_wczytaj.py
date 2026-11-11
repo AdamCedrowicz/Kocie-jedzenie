@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from budzet.wczytaj import kwota, wczytaj_folder, wczytaj_plik
+from budzet.wczytaj import kwota, pko_karta, pko_karta_pdf, wczytaj_folder, wczytaj_plik
 
 MOJE = {"moje_rachunki": ["11 1111 1111 1111 1111 1111 1111",   # PKO konto
                           "22 2222 2222 2222 2222 2222 2222",   # mBank
@@ -40,6 +40,16 @@ ERSTE = (
     "12-10-2026,10-10-2026,Wpłata do PKO,Ja PKO,11 1111 1111 1111 1111 1111 1111,\"-3000,00\",\"9619,00\",2,\n"
     "09-10-2026,09-10-2026,FV-1,KLIENT SP. Z O.O.,66 6666 6666 6666 6666 6666 6666,\"12619,00\",\"12619,00\",3,\n"
 )
+
+# Tekst tak, jak pypdf wyciąga go z miesięcznego zestawienia karty PKO.
+PKO_KARTA_PDF = """ZESTAWIENIE OPERACJI
+Przejrzysta karta kredytowa PKO Visa
+24.08.2026 25.08.2026 SKLEP TESTOWY         Katowice     POL PLN 37,20
+10.09.2026 10.09.2026 SPŁATA NALEŻNOŚCI - DZIĘKUJEMY PLN -1 000,00
+12.09.2026 14.09.2026 KAWIARNIA  TORUN  POL PLN 1 012,80
+Saldo początkowe: Dokonane operacje: Wpłaty: Odsetki: Całkowite zadłużenie:
+1 000,00 + 1 050,00 - 1 000,00 + 0,00 = 1 050,00
+"""
 
 
 def zapisz(folder, nazwa, tekst, kodowanie="utf-8"):
@@ -83,6 +93,31 @@ class TestWczytaj(unittest.TestCase):
         self.assertEqual(fmt, "pko_karta")
         self.assertEqual((df.data[0], df.data_ksiegowania[0]), ("2026-11-09", "2026-11-10"))
         self.assertEqual(df.kontrahent[0], "SKLEP TESTOWY Katowice POL")
+
+    def test_karta_pdf(self):
+        wiersze, problemy = pko_karta_pdf(PKO_KARTA_PDF)
+        self.assertEqual(problemy, [])
+        self.assertEqual([(w["data"], w["kwota"]) for w in wiersze],
+                         [("2026-08-24", -37.2), ("2026-09-10", 1000.0), ("2026-09-12", -1012.8)])
+        self.assertEqual(wiersze[0]["kontrahent"], "SKLEP TESTOWY Katowice POL")
+
+    def test_karta_pdf_niezgodne_podsumowanie(self):
+        _, problemy = pko_karta_pdf(PKO_KARTA_PDF.replace("1 012,80", "1 012,00"))
+        self.assertTrue(problemy)
+
+    def test_karta_csv_i_pdf_daja_ten_sam_id(self):
+        zapisz(self.dir, "karta.csv", PKO_KARTA.replace("2026-11-10\",\"2026-11-09", "2026-08-25\",\"2026-08-24", 1))
+        df_csv, _, _ = wczytaj_plik(Path(self.dir) / "karta.csv")
+        from budzet import wczytaj as w
+        stary = w.tekst_pdf
+        w.tekst_pdf = lambda _: PKO_KARTA_PDF
+        try:
+            p = zapisz(self.dir, "zestawienie.pdf", "x")
+            df_pdf, fmt, _ = wczytaj_plik(p)
+        finally:
+            w.tekst_pdf = stary
+        self.assertEqual(fmt, "pko_karta_pdf")
+        self.assertEqual(df_csv.id[0], df_pdf.id[0])
 
     def test_mbank(self):
         df, fmt, problemy = wczytaj_plik(Path(self.dir) / "mbank.csv")

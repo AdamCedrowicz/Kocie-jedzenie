@@ -87,11 +87,40 @@ def pko_karta(tekst):
         if not w or not w[0].strip():
             continue
         # W eksporcie "Data operacji" bywa późniejsza niż "Data przetworzenia" - data zakupu to wcześniejsza.
+        sklep = spacje(re.sub(r"^Tytuł:", "", w[5]))
         wiersze.append(_pusty(
             zrodlo="pko_karta", rachunek="PKO karta", data=min(w[0], w[1]), data_ksiegowania=max(w[0], w[1]),
-            typ=w[2], kwota=kwota(w[3]), waluta=w[4],
-            kontrahent=spacje(re.sub(r"^Tytuł:", "", w[5])), opis=spacje(w[5])))
+            typ=w[2], kwota=kwota(w[3]), waluta=w[4], kontrahent=sklep, opis=sklep))
     return wiersze, []
+
+
+_KW = r"-?\d{1,3}(?: \d{3})*,\d{2}"
+
+
+def pko_karta_pdf(tekst):
+    """Miesięczne zestawienie karty kredytowej PKO (PDF -> tekst). W PDF zakup jest dodatni, spłata ujemna."""
+    wiersze = []
+    for l in tekst.splitlines():
+        m = re.fullmatch(rf"(\d\d)\.(\d\d)\.(\d{{4}}) (\d\d)\.(\d\d)\.(\d{{4}}) (.+?) ([A-Z]{{3}})(?: ({_KW}))? ({_KW})",
+                         l.strip())
+        if m:
+            sklep = spacje(m[7])
+            wiersze.append(_pusty(
+                zrodlo="pko_karta", rachunek="PKO karta", data=f"{m[3]}-{m[2]}-{m[1]}",
+                data_ksiegowania=f"{m[6]}-{m[5]}-{m[4]}", waluta="PLN", kwota=-kwota(m[10]),
+                kontrahent=sklep, opis=sklep))
+    # Kontrola: "Saldo początkowe ... Całkowite zadłużenie:" i w następnej linii "S + D - W + O = Z".
+    problemy = []
+    m = re.search(rf"Całkowite zadłużenie:\s*\n\s*({_KW}) \+ ({_KW}) - ({_KW}) \+ ({_KW}) = ({_KW})", tekst)
+    if not m:
+        problemy.append("PDF karty: nie znaleziono podsumowania zestawienia")
+    else:
+        s0, dok, wpl, ods, zad = (kwota(x) for x in m.groups())
+        zakupy = round(-sum(w["kwota"] for w in wiersze if w["kwota"] < 0), 2)
+        splaty = round(sum(w["kwota"] for w in wiersze if w["kwota"] > 0), 2)
+        if (zakupy, splaty) != (dok, wpl) or abs(s0 + dok - wpl + ods - zad) > 0.005:
+            problemy.append(f"PDF karty: operacje {zakupy} / wpłaty {splaty}, podsumowanie {dok} / {wpl}")
+    return wiersze, problemy
 
 
 def mbank(tekst):
@@ -156,12 +185,15 @@ def _kontrola_sald(wiersze):
     return problemy
 
 
-PARSERY = {"pko_konto": pko_konto, "pko_karta": pko_karta, "mbank": mbank, "erste": erste}
+PARSERY = {"pko_konto": pko_konto, "pko_karta": pko_karta, "pko_karta_pdf": pko_karta_pdf, "mbank": mbank,
+           "erste": erste}
 
 
 def rozpoznaj(tekst):
     if "#Data operacji" in tekst:
         return "mbank"
+    if "ZESTAWIENIE OPERACJI" in tekst and "karta kredytowa PKO" in tekst:
+        return "pko_karta_pdf"
     pierwsza = tekst.splitlines()[0] if tekst else ""
     if pierwsza.startswith('"Data operacji","Data waluty","Typ transakcji"'):
         return "pko_konto"
@@ -175,8 +207,13 @@ def rozpoznaj(tekst):
 
 # ---------- całość ----------
 
+def tekst_pdf(sciezka):
+    from pypdf import PdfReader  # tylko gdy są PDF-y
+    return "\n".join(s.extract_text() for s in PdfReader(sciezka).pages)
+
+
 def wczytaj_plik(sciezka):
-    tekst = czytaj_tekst(sciezka)
+    tekst = tekst_pdf(sciezka) if str(sciezka).lower().endswith(".pdf") else czytaj_tekst(sciezka)
     fmt = rozpoznaj(tekst)
     wiersze, problemy = PARSERY[fmt](tekst)
     df = pd.DataFrame(wiersze, columns=KOLUMNY)
@@ -219,10 +256,10 @@ def oznacz_transfery(df, moje_rachunki, kontrahenci_wewnetrzni=(), rachunki_prze
 
 
 def wczytaj_folder(folder, ustawienia=None):
-    """Zwraca (tabela transakcji, raport) dla wszystkich *.csv w folderze."""
+    """Zwraca (tabela transakcji, raport) dla wszystkich *.csv i *.pdf w folderze."""
     ust = ustawienia or {}
     czesci, raport = [], []
-    for p in sorted(Path(folder).glob("*.csv")):
+    for p in sorted(x for x in Path(folder).iterdir() if x.suffix.lower() in (".csv", ".pdf")):
         try:
             df, fmt, problemy = wczytaj_plik(p)
         except Exception as e:  # jeden zły plik nie blokuje reszty
