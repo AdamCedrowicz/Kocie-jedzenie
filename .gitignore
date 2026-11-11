@@ -7,3 +7,7 @@ budzet/**/*.csv
 budzet/**/*.xlsx
 budzet/**/*.pdf
 *.xlsx
+budzet/reguly_prywatne.csv
+budzet/etykiety.csv
+!budzet/reguly.csv
+!budzet/reguly_prywatne.example.csv

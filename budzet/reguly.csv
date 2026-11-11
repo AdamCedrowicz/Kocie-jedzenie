@@ -1,0 +1,39 @@
+kategoria;kontrahent;tytul;opis;typ;kierunek;projekt;uwagi
+# --- poza budżetem ---
+POZA BUDŻETEM;;;;PRZELEW WŁASNY;;;przelew między własnymi rachunkami mBanku
+POZA BUDŻETEM;AUTOPAY;;;EXPRESS ELIXIR PRZYCH;+;;przelew ekspresowy z Erste na konto prywatne
+POZA BUDŻETEM;^KREDYT - UZNANIE;;;;+;;wypłata kredytu – to nie przychód
+# --- przychody ---
+Wynagrodzenie podstawowe Adam;BONUM INVESTMENT|SUPER GRUPA;;;;+;;PLN z kantoru (EUR z Erste)
+# --- oszczędności i inwestycje (wpływ = wypłata z oszczędności, zmniejsza kategorię) ---
+Inwestycje Adam;TRADE REPUBLIC;;;;;;
+Inwestycje Adam;OBLIGACJE SKARBOWE;;;;;;
+Inwestycje Adam;KOMORNIK;;;;;;wadia i zakupy na licytacjach
+Inwestycje Adam;URZĄD MIASTA BYTOM;;;;-;;wadium
+Inwestycje Adam;KANCELARIA NOTARIALNA;;;;;;
+# --- firma i podatki (kwoty z banku) ---
+ZUS Adam;ZAKŁAD UBEZPIECZEŃ SPOŁECZNYCH;;;;;;
+Podatki Adam;URZĄD SKARBOWY;;;;;;
+Księgowa Adam;FINANZHAUS;;;;;;
+# --- media i mieszkania ---
+Mikołowska 49a/2 › Prąd Adam;;;TAURON.*MIKOŁOWSK;;-;Mikołowska;
+Internet Mikołowska Adam;T-MOBILE;MIKOŁOWSK;;;-;Mikołowska;
+Czynsz Adam;SDSM KLEOFAS;;;;-;Mikołowska;czynsz do wspólnoty
+prąd w garażu Adam;;;TAURON.*GARA[ŻZ];;-;Garaż;
+Kosmiczna - opłaty Adam;;;TAURON.*3070561090;;-;;
+Kosmiczna - opłaty Adam;ŚLĄSKO|PGNIG;;;;-;;
+Rostka- dopłaty wspólne;TELPOL;;;;-;;internet na Rostki (tak w budżecie)
+Wydatki działka Adam;ROD WEBERA;;;;-;;
+Telefon Adam;^PLUS$;;;;-;;
+# --- codzienne ---
+Jedzenie dom Adam;LIDL|BIEDRONKA|ŻABKA|ZABKA|AUCHAN|ALDI|DINO |CARREFOUR|KAUFLAND|NETTO|STOKROTKA|LEWIATAN|PIEKARNIA|PACZKARNIA;;;;-;;
+Paliwo do auta wspólne;ORLEN|^BP|SHELL|CIRCLE K|MOYA|AMIC;;;;-;;
+Jedzenie miasto Adam;MCDONALDS|BURGER KING|KFC|^BK KATOW|JUGO GRILL;;;;-;;
+Lekarstwa Adam;APTEK;;;;-;;
+Koty › Jedzenie wspólne;ZOOPLUS;;;;-;;
+Bilet komunikacji miejskiej Adam;MOBILET|^MPK|JAKDOJADE|SKYCASH;;;;-;;
+Too Good To Go Adam;^TGTG|TOO GOOD;;;;-;;
+Ubranie lumpy Adam;VINTED;;;;-;;
+Buty Adam;EOBUWIE|DEICHMANN|^CCC;;;;-;;
+Barber Adam;L&?G ATELIER;;;;-;;
+Sport Adam;KRAV MAGA;;;;-;;

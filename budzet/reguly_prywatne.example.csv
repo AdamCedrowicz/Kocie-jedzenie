@@ -1,0 +1,4 @@
+kategoria;kontrahent;tytul;opis;typ;kierunek;projekt;uwagi
+# Reguły z nazwiskami osób i numerami - skopiuj do reguly_prywatne.csv (nie trafia do repo). Mają pierwszeństwo przed reguly.csv.
+Wynajem nieruchomości Adam;NAZWISKO1|NAZWISKO2;;;;+;Mikołowska;czynsze lokatorek
+POZA BUDŻETEM;NAZWISKO;KAUCJA;;;+;Mikołowska;kaucja – nie przychód
